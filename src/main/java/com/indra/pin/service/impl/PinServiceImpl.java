@@ -1,26 +1,26 @@
 package com.indra.pin.service.impl;
 
 import com.indra.pin.dal.entity.PinEntity;
-import com.indra.pin.dal.entity.UserEntity;
 import com.indra.pin.dal.repository.UserRepository;
 import com.indra.pin.exception.InvalidPinAttemptsException;
 import com.indra.pin.exception.PinLimitExceedException;
 import com.indra.pin.model.*;
 import com.indra.pin.dal.repository.PinRepository;
 import com.indra.pin.service.PinService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.ObjectUtils;
 
-import javax.xml.ws.http.HTTPException;
+
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 
 @Service
+@Slf4j
 public class PinServiceImpl implements PinService {
 
     @Autowired
@@ -42,7 +42,7 @@ public class PinServiceImpl implements PinService {
     @Transactional
     public PinResponse generatePin(GeneratePinModel request) {
 
-        int pinCount = Integer.valueOf(String.valueOf(redisTemplate.opsForValue().get(request.getMsisdn())));
+
 
         List<PinEntity> exitingPinList = pinRepository.findByMsisdn(request.getMsisdn());
         PinEntity pinEntity = new PinEntity();
@@ -52,10 +52,9 @@ public class PinServiceImpl implements PinService {
         String pin = String.valueOf(generatePin(request.getMsisdn()));
         pinEntity.setMsisdn(request.getMsisdn());
         pinEntity.setPin(pin);
-        pinEntity.setStatus(true);
+        pinEntity.setStatus(false);
         pinRepository.save(pinEntity);
-        redisTemplate.opsForValue().set(request.getMsisdn(), Integer.valueOf(String.valueOf(redisTemplate.opsForValue().get(request.getMsisdn()))) + 1);
-
+        redisTemplate.opsForValue().set(request.getMsisdn(), 0);
         return convertToResponse(pinEntity);
     }
 
@@ -81,7 +80,6 @@ public class PinServiceImpl implements PinService {
 
 
     @Override
-    @Transactional
     public ValidatePinResponse validatePIN(ValidatePinModel request) {
 
         String msisdn = request.getMsisdn();
@@ -93,7 +91,17 @@ public class PinServiceImpl implements PinService {
                 .orElse(null);
         System.out.println("Test");
         if (!ObjectUtils.isEmpty(pinEntity1)) {
+            pinEntity1.setStatus(true);
+            pinRepository.save(pinEntity1);
+            redisTemplate.opsForValue().set(request.getMsisdn(), 0);
             return MarshalValidatePinResponse(pinEntity1);
+        }else {
+            int pinCount = Integer.valueOf(String.valueOf(redisTemplate.opsForValue().get(request.getMsisdn())));
+            if(pinCount >= 3){
+                log.info("Invalid Attempts reached to limit Deleting all PINS for MSISDN:"+msisdn);
+                pinRepository.deleteAll(pinEntityList);
+            }
+            redisTemplate.opsForValue().set(request.getMsisdn(), Integer.valueOf(String.valueOf(redisTemplate.opsForValue().get(request.getMsisdn()))) + 1);
         }
 
         throw new InvalidPinAttemptsException("Invalid PIN attempts for MSISDN " + request.getMsisdn());
